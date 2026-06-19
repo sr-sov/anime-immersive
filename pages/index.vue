@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { Anime } from '~/types/jikan'
 
 /**
@@ -17,44 +17,61 @@ import type { Anime } from '~/types/jikan'
 const { getTopAnime, getSeasonNow } = useJikan()
 
 // --- Top titles: hero + gallery -------------------------------------------
+// topFailed/seasonFailed are set INSIDE the handlers (rather than letting them
+// reject) so an SSR/build-time fetch timeout never 500s the prerender — the
+// page ships its loading/error state and the client re-fetch recovers.
+const topFailed = ref(false)
 const {
   data: topData,
   pending: topPending,
-  error: topError,
   refresh: refreshTop,
 } = await useAsyncData<Anime[]>(
   'top-anime',
   async () => {
-    // A tight, curated set — the gallery is a deliberate dozen, not a wall.
-    const res = await getTopAnime(1, { type: 'tv', limit: 12 })
-    return res.data
+    try {
+      topFailed.value = false
+      // A tight, curated set — the gallery is a deliberate dozen, not a wall.
+      const res = await getTopAnime(1, { type: 'tv', limit: 12 })
+      return res.data
+    } catch {
+      topFailed.value = true
+      return []
+    }
   },
   { default: () => [] },
 )
+const topError = computed(() => topFailed.value)
 
 const featured = computed(() => topData.value[0] ?? null)
 const gallery = computed(() => topData.value)
 
 // --- Now airing: the rail --------------------------------------------------
+const seasonFailed = ref(false)
 const {
   data: seasonData,
   pending: seasonPending,
-  error: seasonError,
   refresh: refreshSeason,
 } = await useAsyncData<Anime[]>(
   'season-now',
   async () => {
-    const res = await getSeasonNow(1, 20)
-    // De-dupe (Jikan occasionally repeats across a season) and trim.
-    const seen = new Set<number>()
-    return res.data.filter((a) => {
-      if (seen.has(a.mal_id)) return false
-      seen.add(a.mal_id)
-      return true
-    })
+    try {
+      seasonFailed.value = false
+      const res = await getSeasonNow(1, 20)
+      // De-dupe (Jikan occasionally repeats across a season) and trim.
+      const seen = new Set<number>()
+      return res.data.filter((a) => {
+        if (seen.has(a.mal_id)) return false
+        seen.add(a.mal_id)
+        return true
+      })
+    } catch {
+      seasonFailed.value = true
+      return []
+    }
   },
   { default: () => [] },
 )
+const seasonError = computed(() => seasonFailed.value)
 
 const showTopLoading = computed(() => topPending.value && gallery.value.length === 0)
 const showTopError = computed(() => !!topError.value && gallery.value.length === 0)
@@ -94,14 +111,15 @@ const showTopError = computed(() => !!topError.value && gallery.value.length ===
     >
       <Marquee :speed="0.05">
         <span
-          v-for="word in ['SAKURA NOIR', 'TOP RATED', 'AN IMMERSIVE INDEX', 'BUILT WITH NUXT · GSAP · OGL']"
+          v-for="(word, i) in ['SAKURA NOIR', 'TOP RATED', 'AN IMMERSIVE INDEX', 'BUILT WITH NUXT · GSAP · OGL']"
           :key="word"
           class="flex items-center"
         >
           <span class="px-8 font-display text-3xl uppercase tracking-tight text-bone sm:text-5xl">
             {{ word }}
           </span>
-          <span class="text-rose">✦</span>
+          <!-- Duotone separators: the rose / cyan brand pair, alternating. -->
+          <span :class="i % 2 === 0 ? 'text-rose' : 'text-ice'">✦</span>
         </span>
       </Marquee>
     </div>

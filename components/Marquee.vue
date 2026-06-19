@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useEnvFlags } from '~/composables/useReducedMotion'
+import { loadGsap } from '~/composables/useGsap'
 
 /**
  * A velocity-reactive marquee: a base drift that speeds up and reverses with
@@ -19,30 +20,36 @@ const props = withDefaults(
 )
 
 const { reducedMotion } = useEnvFlags()
-const { $gsap, $ScrollTrigger } = useNuxtApp()
 
 const a = ref<HTMLElement | null>(null)
 const b = ref<HTMLElement | null>(null)
 let x = 0
 let direction = 1
 let velocityBoost = 1
-let st: ReturnType<typeof $ScrollTrigger.create> | null = null
+let st: { kill: () => void } | null = null
 let tickerFn: (() => void) | null = null
-
-const wrap = $gsap.utils.wrap(-100, 0)
+let gsap: import('~/composables/useGsap').GsapBundle['gsap'] | null = null
+let wrap: ((v: number) => number) | null = null
 
 function tick() {
+  if (!gsap || !wrap) return
   // Ease the scroll boost back toward 1 each frame.
   velocityBoost += (1 - velocityBoost) * 0.05
   x += props.speed * direction * velocityBoost
   const v = wrap(x)
-  $gsap.set([a.value, b.value], { xPercent: v })
+  gsap.set([a.value, b.value], { xPercent: v })
 }
 
-onMounted(() => {
+onMounted(async () => {
   if (reducedMotion.value || !a.value) return
+  // GSAP is lazy-loaded after first paint (kept out of the entry bundle).
+  const bundle = await loadGsap()
+  if (reducedMotion.value || !a.value) return
+  gsap = bundle.gsap
+  const ScrollTrigger = bundle.ScrollTrigger
+  wrap = gsap.utils.wrap(-100, 0)
 
-  st = $ScrollTrigger.create({
+  st = ScrollTrigger.create({
     onUpdate: (self: { direction: number; getVelocity: () => number }) => {
       direction = self.direction === -1 ? -1 : 1
       // A short kick proportional to scroll speed.
@@ -51,11 +58,11 @@ onMounted(() => {
     },
   })
   tickerFn = tick
-  $gsap.ticker.add(tickerFn)
+  gsap.ticker.add(tickerFn)
 })
 
 onBeforeUnmount(() => {
-  if (tickerFn) $gsap.ticker.remove(tickerFn)
+  if (tickerFn) gsap?.ticker.remove(tickerFn)
   st?.kill()
 })
 </script>

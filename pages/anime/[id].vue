@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, watchEffect } from 'vue'
+import { computed, ref } from 'vue'
 import { coverImage, useFormat } from '~/composables/useFormat'
+import { coverSrcSet } from '~/composables/useImage'
 import type {
   Anime,
   AnimeCharacter,
@@ -20,11 +21,26 @@ const id = computed(() => route.params.id as string)
 const { getAnimeById, getCharacters, getRecommendations } = useJikan()
 const { score, year, compact, episodes, synopsisLead } = useFormat()
 
-const { data, pending, error, refresh } = await useAsyncData<Anime | null>(
+// The fetch can fail at BUILD time (Jikan rate-limit / flaky network during
+// prerender). We catch inside the handler and signal failure through `failed`
+// rather than rejecting, so the prerender never 500s — it ships the error state
+// with a working client retry, and the client re-fetch recovers. `refresh()`
+// clears the flag and re-runs.
+const failed = ref(false)
+const { data, pending, refresh } = await useAsyncData<Anime | null>(
   () => `anime:${id.value}`,
-  async () => (await getAnimeById(id.value)).data,
+  async () => {
+    try {
+      failed.value = false
+      return (await getAnimeById(id.value)).data
+    } catch {
+      failed.value = true
+      return null
+    }
+  },
   { watch: [id], default: () => null },
 )
+const error = computed(() => failed.value)
 const anime = computed(() => data.value)
 
 // Cast + recommendations are secondary; failures are swallowed to empty rails
@@ -95,10 +111,30 @@ const stats = computed(() => {
   ]
 })
 
-watchEffect(() => {
-  if (anime.value) {
-    useHead({ title: `${anime.value.title} · Sakura Noir` })
-  }
+// Per-title SEO, set off the API data so the prerendered detail page ships its
+// OWN title, description, and cover as the og/twitter image (real social cards,
+// not the generic site card). Computed sources keep it correct after navigation.
+const seoTitle = computed(() =>
+  anime.value ? `${anime.value.title} · Sakura Noir` : 'Sakura Noir',
+)
+const seoDescription = computed(() => {
+  const a = anime.value
+  if (!a) return 'An immersive, scroll-driven index of the most acclaimed anime.'
+  const lead = synopsisLead(a.synopsis, 160)
+  return lead || `${a.title} — score, rank, cast and recommendations on Sakura Noir.`
+})
+
+useSeoMeta({
+  title: () => seoTitle.value,
+  description: () => seoDescription.value,
+  ogTitle: () => seoTitle.value,
+  ogDescription: () => seoDescription.value,
+  ogType: 'video.tv_show',
+  ogImage: () => cover.value || undefined,
+  twitterCard: 'summary_large_image',
+  twitterTitle: () => seoTitle.value,
+  twitterDescription: () => seoDescription.value,
+  twitterImage: () => cover.value || undefined,
 })
 </script>
 
@@ -142,6 +178,8 @@ watchEffect(() => {
           <img
             v-if="cover"
             :src="cover"
+            :srcset="coverSrcSet(anime.images)"
+            sizes="100vw"
             :alt="`Cover art for ${anime.title}`"
             fetchpriority="high"
             class="h-full w-full object-cover object-center"
@@ -211,8 +249,8 @@ watchEffect(() => {
       <!-- Stats + synopsis spread -->
       <section class="container-page py-24">
         <div class="grid gap-16 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-          <!-- Typeset stat sidebar -->
-          <Reveal :y="30" :stagger="0.06" class="grid grid-cols-2 gap-px self-start border hairline bg-void-200/40">
+          <!-- Typeset stat sidebar (semantic <dl>: each cell is a term/value). -->
+          <Reveal as="dl" :y="30" :stagger="0.06" class="grid grid-cols-2 gap-px self-start border hairline bg-void-200/40">
             <div
               v-for="s in stats"
               :key="s.label"
@@ -305,7 +343,12 @@ watchEffect(() => {
             <span class="h-px flex-1 bg-void-200" />
           </Reveal>
         </div>
+        <!-- tabindex + label: the horizontal scroll region is keyboard-reachable
+             (arrow keys scroll it) and announced, not a focus trap-free dead end. -->
         <div
+          tabindex="0"
+          role="group"
+          aria-label="Cast — scroll horizontally"
           class="flex gap-5 overflow-x-auto px-5 pb-4 sm:px-8 lg:px-12 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           <figure
@@ -316,6 +359,8 @@ watchEffect(() => {
             <div class="aspect-[3/4] overflow-hidden rounded-lg bg-void-100">
               <img
                 :src="coverImage(c.character.images)"
+                :srcset="coverSrcSet(c.character.images)"
+                sizes="8rem"
                 :alt="`Portrait of ${c.character.name}`"
                 loading="lazy"
                 class="h-full w-full object-cover"

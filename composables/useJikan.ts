@@ -42,8 +42,14 @@ export function buildCacheKey(
   return qs ? `${path}?${qs}` : path
 }
 
-/** Minimum spacing between outbound requests. ~3 req/s -> ~334ms; we pad it. */
-const MIN_REQUEST_SPACING_MS = 360
+/**
+ * Minimum spacing between outbound requests. Jikan documents ~3 req/s but
+ * rate-limits bursts from a single IP aggressively, so during a static build
+ * (many sequential prerenders) we space requests out much further. In the
+ * browser the user makes a handful of requests, so the tighter spacing holds.
+ */
+const isServer = typeof window === 'undefined'
+const MIN_REQUEST_SPACING_MS = isServer ? 1100 : 360
 let lastRequestAt = 0
 let queueTail: Promise<void> = Promise.resolve()
 
@@ -81,18 +87,36 @@ export function useJikan() {
       return cache.get(key) as T
     }
 
-    await scheduleSlot()
-
-    const result = await $fetch<T>(`${base}${path}`, {
-      // $fetch serializes params and drops undefined values for us.
-      query: params,
-      retry: 1,
-      retryDelay: 600,
-      timeout: 12_000,
-    })
-
-    cache.set(key, result)
-    return result
+    // Retry on the two flaky outcomes (HTTP 429 rate-limit, network timeout)
+    // with a widening backoff. On the server this keeps the static build alive
+    // through Jikan's aggressive per-IP throttling; in the browser it smooths a
+    // transient blip. The caller still gets a throw if every attempt fails.
+    const attempts = isServer ? 4 : 2
+    let lastErr: unknown
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      await scheduleSlot()
+      try {
+        const result = await $fetch<T>(`${base}${path}`, {
+          // $fetch serializes params and drops undefined values for us.
+          query: params,
+          retry: 0,
+          timeout: 12_000,
+        })
+        cache.set(key, result)
+        return result
+      } catch (err) {
+        lastErr = err
+        const status = (err as { status?: number; statusCode?: number })?.status
+          ?? (err as { statusCode?: number })?.statusCode
+        const retryable = status === 429 || status === undefined || status >= 500
+        if (attempt < attempts - 1 && retryable) {
+          await sleep(700 * (attempt + 1) + (isServer ? 600 : 0))
+          continue
+        }
+        throw err
+      }
+    }
+    throw lastErr
   }
 
   // ---------------------------------------------------------------------
