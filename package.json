@@ -1,0 +1,32 @@
+{
+  "name": "anime-immersive",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sakura Noir — a scroll-driven, WebGL-accented immersive anime index. Nuxt 3 · GSAP · OGL.",
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "postinstall": "nuxt prepare",
+    "typecheck": "nuxt typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@nuxtjs/tailwindcss": "6.14.0",
+    "@types/node": "^26.0.0",
+    "nuxt": "3.21.8",
+    "typescript": "5.9.3",
+    "vitest": "^4.1.9",
+    "vue-tsc": "2.2.12"
+  },
+  "dependencies": {
+    "gsap": "3.13.0",
+    "lenis": "^1.3.11",
+    "ogl": "^1.0.11",
+    "vue": "3.5.34",
+    "vue-router": "4.5.1"
+  }
+}
