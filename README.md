@@ -19,12 +19,18 @@ gets a real static experience, not a shortened one.
 
 - **Cinematic hero** — a full-bleed featured cover with a slow zoom intro, a
   scroll parallax, and a SplitText character reveal of the wordmark.
-- **The signature: a pinned, scroll-orchestrated WebGL gallery.** A single OGL
-  plane crossfades between the top covers with a displacement + chromatic
-  aberration shader keyed to scroll progress. The atmospheric layer is WebGL;
-  all readable content (rank, title, score, synopsis, the "Enter" link) lives in
-  the DOM on top, so it stays accessible and degrades to a CSS crossfade — and
-  to a clean static card stack under reduced motion.
+- **The signature: a pinned, scroll-orchestrated gallery, rendered on a tiered
+  strategy.** A `canvasSuitability()` check inspects the real device (WebGL
+  renderer string vs a known low-end set, the DPR×area pixel budget, memory and
+  core hints, coarse-pointer + high DPR) and picks one of three tiers: **gl** —
+  a single OGL plane crossfading the top covers with a displacement + chromatic
+  + duotone shader keyed to scroll; **parallax** — the same pinned composition
+  with no canvas and no shader, a GPU-cheap DOM crossfade + drift (a real
+  cinematic fallback for weak GPUs / no-WebGL, not a downgrade); **static** —
+  reduced-motion or a genuinely weak device gets the legible card stack. In
+  every tier the readable content (rank, title, score, synopsis, the "Enter"
+  link) lives in the DOM, so it stays accessible. OGL and GSAP are **code-split**
+  — they load after first paint, never in the critical entry bundle.
 - **A magnetic, framerate-independent cursor.** A damped follower ring eases
   toward the pointer with `target + (pos − target)·dampingᵈᵗ` (Rory Driscoll /
   Freya Holmér), so the feel is identical at 60 and 120 Hz. It snaps onto
@@ -40,16 +46,22 @@ gets a real static experience, not a shortened one.
 ## Stack
 
 - **Nuxt 3** (Vue 3, `<script setup>`), **TypeScript** in `strict` mode
-- **TailwindCSS** — a "Sakura Noir" palette (deep near-black, neon magenta-rose
-  primary, cold cyan secondary), in OKLCH-derived tokens
-- **GSAP 3.13** — ScrollTrigger + SplitText (both free in 3.13+), one shared
-  registration, the house ticker driving every per-frame loop
+- **TailwindCSS** — a "Sakura Noir" magenta-rose / cyan duotone on near-black
+  (the cyan is real: it grades the gallery shader and returns as a second UI
+  accent), in OKLCH-derived tokens; all metadata text clears WCAG AA contrast
+- **GSAP 3.13** — ScrollTrigger + SplitText (both free in 3.13+), lazy-loaded
+  after first paint via `loadGsap()`, the house ticker driving every per-frame
+  loop
 - **Lenis** — smooth scroll wired to the GSAP ticker (native scroll preserved)
 - **OGL** — a ~10 kB WebGL layer for the gallery shader
 - **Jikan API v4** — no key, fetched client-side; deploys fully static
 
 ## How the motion holds 60fps
 
+- **The motion stack loads after first paint.** With `ssr: true` the LCP is
+  server-painted, so GSAP + ScrollTrigger + SplitText + Lenis + OGL are all
+  `import()`-ed lazily (one cached chunk) the first time a motion component
+  mounts — they never sit in the critical entry bundle blocking interactivity.
 - **One ticker.** Lenis, the cursor lerp, the WebGL render, and the marquee all
   ride `gsap.ticker` — never a second `requestAnimationFrame` loop.
 - **Transform/opacity only.** No animated layout properties; `will-change` is
@@ -86,9 +98,14 @@ composables/
   useFormat.ts                 Score / year / synopsis / cover helpers (pure)
   useReducedMotion.ts          Reactive reduced-motion + fine-pointer flags
   useSmoothScroll.ts           Lenis ↔ GSAP ticker wiring
-  useGalleryGL.ts              OGL crossfade gallery (displacement + chroma)
+  useGalleryGL.ts              OGL crossfade gallery (displacement + chroma + duotone)
+  useGsap.ts                   Lazy GSAP/ScrollTrigger/SplitText loader (after first paint)
+  useDeviceTier.ts             canvasSuitability() — gl / parallax / static tiering
+  useImage.ts                  Responsive cover srcset + sizes
   useDebounce.ts               Debounced ref
-plugins/gsap.client.ts         Registers ScrollTrigger + SplitText, once
+scripts/
+  verify-build.mjs             CI build gate: prerender + deep-link + per-title SEO
+  axe-gate.mjs                 CI a11y gate: axe-core over home / gallery / detail
 components/
   ImmersiveHero.vue            Cinematic hero (parallax + SplitText)
   ScrollGallery.vue            The pinned WebGL scroll gallery (+ static fallback)
@@ -113,7 +130,7 @@ npm run dev          # http://localhost:3000
 ```
 
 ```bash
-npm test             # vitest run (25 tests)
+npm test             # vitest run (30 tests)
 npm run typecheck    # nuxt typecheck (strict)
 npm run generate     # static build -> .output/public
 ```
@@ -140,12 +157,21 @@ and a genuine reduced-motion path: no pin, no WebGL animation, no custom cursor 
 a legible static index instead. The WebGL `<img>` content is never the only copy
 of any information.
 
-## Deploy (GitHub Pages)
+## Rendering & deploy (GitHub Pages, SSG)
 
-Configured as a GitHub Pages **project page**: `app.baseURL` is
-`/anime-immersive/` and Nitro uses the `github-pages` preset (emits `.nojekyll`
-and a `404.html` SPA fallback). `npm run generate` produces a publishable
-`.output/public`.
+`ssr: true` with the Nitro `github-pages` preset — a fully static build, no
+deploy-time server. At build a `nitro:config` hook seeds the prerender list from
+`/top/anime` (rate-guarded, with a static fallback so a flaky API never blocks
+the build), so the homepage and the top ~40 `/anime/<id>` routes ship as **real
+server-painted 200s** with per-title `<title>` + `og:image` (fixes deep links,
+social cards, and the mobile LCP — the cover paints from HTML, not after a JS
+boot). The long tail stays SPA-fallback via `404.html`. `app.baseURL` is
+`/anime-immersive/` for the project sub-path. `npm run generate` produces a
+publishable `.output/public`.
+
+Two CI gates guard this: `npm run verify:build` asserts the prerender +
+deep-link + per-title SEO, and `npm run gate:a11y` runs axe-core over the
+homepage, the gallery in its active state, and a detail deep link.
 
 ---
 
