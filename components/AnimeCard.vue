@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { coverImage, useFormat } from '~/composables/useFormat'
+import { coverSrcSet, RAIL_SIZES } from '~/composables/useImage'
 import type { Anime } from '~/types/jikan'
 
 /**
@@ -29,6 +30,8 @@ const topGenre = computed(
     <img
       v-if="cover"
       :src="cover"
+      :srcset="coverSrcSet(anime.images)"
+      :sizes="RAIL_SIZES"
       :alt="`Cover art for ${anime.title}`"
       loading="lazy"
       decoding="async"
