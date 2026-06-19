@@ -69,7 +69,10 @@ const {
       return []
     }
   },
-  { default: () => [] },
+  // The "now airing" rail is below the fold and lives in <ClientOnly>, so fetch
+  // it client-side only (server:false) and lazily — it never blocks the home
+  // prerender or hydration, only the hero+gallery do.
+  { default: () => [], server: false, lazy: true },
 )
 const seasonError = computed(() => seasonFailed.value)
 

@@ -43,8 +43,13 @@ const { data, pending, refresh } = await useAsyncData<Anime | null>(
 const error = computed(() => failed.value)
 const anime = computed(() => data.value)
 
-// Cast + recommendations are secondary; failures are swallowed to empty rails
-// so a rate-limited sub-request never breaks the page.
+// Cast + recommendations are secondary, below-the-fold content. They are
+// fetched CLIENT-SIDE ONLY (server:false) and lazily (lazy:true) so they:
+//   - never run at prerender (cutting ~80 build-time Jikan calls + keeping the
+//     prerendered HTML lean), and
+//   - never block hydration on the client — they stream in after the page is
+//     interactive, so the main content's TBT isn't paying for them.
+// Failures are swallowed to empty rails so a rate-limited sub-request is silent.
 const { data: castData } = await useAsyncData<AnimeCharacter[]>(
   () => `chars:${id.value}`,
   async () => {
@@ -55,7 +60,7 @@ const { data: castData } = await useAsyncData<AnimeCharacter[]>(
       return []
     }
   },
-  { watch: [id], default: () => [] },
+  { watch: [id], default: () => [], server: false, lazy: true },
 )
 
 const { data: recData } = await useAsyncData<AnimeRecommendation[]>(
@@ -68,7 +73,7 @@ const { data: recData } = await useAsyncData<AnimeRecommendation[]>(
       return []
     }
   },
-  { watch: [id], default: () => [] },
+  { watch: [id], default: () => [], server: false, lazy: true },
 )
 
 // Map recommendations into the minimal Anime-ish shape the rail card reads.
