@@ -7,7 +7,7 @@ on:
 
 jobs:
   verify:
-    name: Typecheck & unit tests
+    name: Typecheck, tests, build gate & a11y
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,3 +25,25 @@ jobs:
 
       - name: Unit tests
         run: npm test
+
+      # Static build (SSG: homepage + top detail routes prerendered, SSR on).
+      # Tolerates a flaky/rate-limited Jikan at build time (falls back to a
+      # static seed for the route list and ships graceful states), so CI is not
+      # gated on a third-party API being up.
+      - name: Generate static site
+        run: npm run generate
+
+      # Deep-link gate: proves the homepage + a directly-typed detail deep link
+      # prerender to real 200s with per-title SEO (the ssr:false regression
+      # guard). No browser needed.
+      - name: Build gate (prerender + deep-link)
+        run: npm run verify:build
+
+      # Ensure a Chrome is available for the axe gate.
+      - name: Install Chrome for Puppeteer
+        run: npx puppeteer browsers install chrome
+
+      # a11y gate: axe-core over the homepage, the gallery in its active state,
+      # and a prerendered detail deep link. Any violation fails the build.
+      - name: a11y gate (axe-core)
+        run: npm run gate:a11y
