@@ -33,7 +33,7 @@ const year = new Date().getFullYear()
           >
             Source · GitHub ↗
           </a>
-          <span class="mt-4 text-bone-faint/60">&copy; {{ year }} · Work sample</span>
+          <span class="mt-4 text-bone-faint">&copy; {{ year }} · Work sample</span>
         </div>
       </div>
     </div>

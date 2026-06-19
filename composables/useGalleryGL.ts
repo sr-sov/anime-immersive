@@ -81,6 +81,20 @@ const FRAG = /* glsl */ `
 
     vec3 color = mix(from, to, p);
 
+    // ---- The real duotone -------------------------------------------------
+    // The brand is a magenta-rose / cyan duotone, so the SHADER carries it: the
+    // outgoing frame is graded toward rose, the incoming toward cyan (ice), and
+    // the split peaks mid-transition where the two hues cross. Luminance drives
+    // the mix so shadows stay in the void while highlights pick up the accent —
+    // a genuine duotone wash, not a flat tint.
+    vec3 rose = vec3(1.000, 0.302, 0.553); // #ff4d8d
+    vec3 ice  = vec3(0.247, 0.878, 0.878); // #3fe0e0
+    float lum = dot(color, vec3(0.299, 0.587, 0.114));
+    vec3 duo = mix(rose, ice, p);                 // rose -> cyan across the cut
+    float split = p * (1.0 - p) * 4.0;            // 0 at ends, 1 at the midpoint
+    float wash = (0.12 + uHover * 0.10) * split;  // accent strongest mid-cross
+    color = mix(color, color * (0.6 + 0.8 * lum) + duo * lum * 0.6, wash);
+
     // Cinematic grade: lift shadows toward the void, gentle vignette.
     float vig = smoothstep(1.15, 0.35, dist);
     color *= mix(0.82, 1.0, vig);

@@ -28,8 +28,10 @@ export default <Partial<Config>>{
         },
         bone: {
           DEFAULT: '#f2eef0', // oklch(0.96 0.004 320) — primary text
-          dim: '#b9adb4', // secondary text
-          faint: '#7c6a76', // tertiary / metadata
+          dim: '#b9adb4', // secondary text — 9.07:1 on void
+          // Tertiary / metadata. Lifted from the old #7c6a76 (3.91:1, under AA)
+          // to #968793 (5.78:1 on void) so even 12px metadata clears WCAG AA.
+          faint: '#968793',
         },
         // Primary accent — neon magenta-rose. Anime-coded, premium-restrained.
         rose: {
