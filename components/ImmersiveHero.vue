@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useEnvFlags } from '~/composables/useReducedMotion'
+import { loadGsap, type GsapMatchMedia } from '~/composables/useGsap'
 import { coverImage } from '~/composables/useFormat'
+import { coverSrcSet } from '~/composables/useImage'
 import type { Anime } from '~/types/jikan'
 
 /**
@@ -15,20 +17,22 @@ import type { Anime } from '~/types/jikan'
 const props = defineProps<{ featured: Anime | null }>()
 
 const { reducedMotion } = useEnvFlags()
-const { $gsap } = useNuxtApp()
 
 const root = ref<HTMLElement | null>(null)
 const layer = ref<HTMLElement | null>(null)
 const veil = ref<HTMLElement | null>(null)
-let mm: ReturnType<typeof $gsap.matchMedia> | null = null
+let mm: GsapMatchMedia | null = null
 
-onMounted(() => {
+onMounted(async () => {
   if (!root.value) return
-  mm = $gsap.matchMedia()
+  // GSAP is lazy-loaded after first paint (kept out of the entry bundle).
+  const { gsap } = await loadGsap()
+  if (!root.value) return
+  mm = gsap.matchMedia()
 
   mm.add('(prefers-reduced-motion: no-preference)', () => {
     // Intro: the cover scales down from a slight zoom; veil lifts.
-    const intro = $gsap.timeline()
+    const intro = gsap.timeline()
     intro.from(layer.value, { scale: 1.12, duration: 1.8, ease: 'expo.out' }, 0)
     intro.fromTo(
       veil.value,
@@ -38,7 +42,7 @@ onMounted(() => {
     )
 
     // Parallax: cover drifts up slower than scroll; veil deepens.
-    const para = $gsap.timeline({
+    const para = gsap.timeline({
       scrollTrigger: {
         trigger: root.value,
         start: 'top top',
@@ -70,6 +74,8 @@ onBeforeUnmount(() => mm?.revert())
       <img
         v-if="props.featured"
         :src="coverImage(props.featured.images)"
+        :srcset="coverSrcSet(props.featured.images)"
+        sizes="100vw"
         :alt="`Cover art for ${props.featured.title}`"
         fetchpriority="high"
         class="h-full w-full object-cover object-top"
@@ -89,7 +95,7 @@ onBeforeUnmount(() => mm?.revert())
     <!-- Content -->
     <div class="container-page relative z-10 pb-[14vh]">
       <div class="mb-6 flex items-center gap-4 font-mono text-xs uppercase tracking-[0.4em] text-rose">
-        <span class="h-px w-12 bg-rose" />
+        <span class="h-px w-12 bg-gradient-to-r from-rose to-ice" />
         An immersive index
       </div>
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useEnvFlags } from '~/composables/useReducedMotion'
+import { loadGsap, type GsapMatchMedia } from '~/composables/useGsap'
 
 /**
  * SplitText scroll-reveal. Splits the slotted text into lines + the chosen
@@ -33,30 +34,41 @@ const props = withDefaults(
 )
 
 const { reducedMotion } = useEnvFlags()
-const { $gsap, $SplitText } = useNuxtApp()
 const el = ref<HTMLElement | null>(null)
 // Starts armed (hidden) only when motion is allowed; reduced-motion is visible
 // from the first paint. SSR-safe default: visible (reducedMotion starts true).
 const arming = ref(!reducedMotion.value)
-let mm: ReturnType<typeof $gsap.matchMedia> | null = null
+let mm: GsapMatchMedia | null = null
 
-onMounted(() => {
+onMounted(async () => {
   if (!el.value) return
-  mm = $gsap.matchMedia()
+  // Arm synchronously (before the async GSAP chunk resolves) so motion-enabled
+  // users hide the text immediately and never see a visible→hidden→reveal flash
+  // while the chunk loads. Reduced-motion stays visible.
+  if (!reducedMotion.value) arming.value = true
+  // GSAP + SplitText are lazy-loaded after first paint.
+  const { gsap, SplitText } = await loadGsap()
+  if (!el.value) return
+  mm = gsap.matchMedia()
 
   mm.add('(prefers-reduced-motion: no-preference)', () => {
     arming.value = true
-    const split = $SplitText.create(el.value as HTMLElement, {
+    const split = SplitText.create(el.value as HTMLElement, {
       type: `lines,${props.unit}`,
       mask: 'lines',
       autoSplit: true,
+      // 'auto' adds aria-label + aria-hidden to the split pieces. On a bare <p>
+      // (no naming-capable role) that aria-label is *prohibited* (axe flags it),
+      // and the split text nodes are real, readable DOM anyway — so we keep the
+      // native text in the a11y tree and skip SplitText's ARIA rewrite.
+      aria: 'none',
       linesClass: 'split-line',
       onSplit(self: { lines: Element[]; chars: Element[]; words: Element[] }) {
         const targets = props.unit === 'chars' ? self.chars : self.words
         // Hide the UNITS, then reveal the wrapper — no flash, no trap.
-        $gsap.set(targets, { yPercent: 110, opacity: 0 })
+        gsap.set(targets, { yPercent: 110, opacity: 0 })
         arming.value = false
-        return $gsap.to(targets, {
+        return gsap.to(targets, {
           yPercent: 0,
           opacity: 1,
           duration: props.duration,

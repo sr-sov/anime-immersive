@@ -1,85 +1,99 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useEnvFlags } from '~/composables/useReducedMotion'
-import { createGalleryGL, type GalleryGL } from '~/composables/useGalleryGL'
+import { loadGsap, type GsapMatchMedia } from '~/composables/useGsap'
+import { canvasSuitability, type DeviceTier } from '~/composables/useDeviceTier'
+import type { GalleryGL } from '~/composables/useGalleryGL'
 import { coverImage, useFormat } from '~/composables/useFormat'
+import { coverSrcSet, GALLERY_SIZES } from '~/composables/useImage'
 import type { Anime } from '~/types/jikan'
 
 /**
- * The signature interaction: a pinned, scroll-orchestrated WebGL gallery.
+ * The signature interaction: a pinned, scroll-orchestrated gallery — rendered
+ * on a TIERED strategy, never a binary WebGL/no-WebGL flip.
  *
- * Full-motion path
- *  - One pinned full-viewport section; vertical scroll scrubs a ScrollTrigger.
- *  - An OGL canvas crossfades between cover textures with a displacement +
- *    chromatic shader keyed to scroll progress (the atmospheric layer).
- *  - A DOM overlay carries the *readable* content (rank, title, score, genres,
- *    a magnetic "Enter" link). The active slide's panel swaps as progress
- *    crosses each step; panels animate with transform/opacity only.
- *  - A vertical progress index tracks position.
+ *  tier 'gl'       — an OGL canvas crossfades cover textures with a displacement
+ *                    + chromatic shader keyed to scroll (the atmospheric layer).
+ *                    OGL is code-split: it loads AFTER first paint, only here.
+ *  tier 'parallax' — the SAME pinned composition with NO canvas and NO shader: a
+ *                    pure DOM crossfade + a GPU-cheap parallax drift. A real
+ *                    cinematic fallback for weak GPUs / no-WebGL, not a downgrade.
+ *  tier 'static'   — reduced-motion / genuinely weak device: a clean, legible,
+ *                    keyboard-navigable card stack. No pin, no animation.
  *
- * Reduced-motion / no-WebGL path
- *  - No pin, no canvas. A clean vertical stack of cinematic cover cards, each
- *    fully legible and keyboard-navigable. A real fallback, not a degraded one.
+ * In every tier the readable content (rank, title, score, genres, the "Enter"
+ * link) lives in the DOM, so it stays accessible. `canvasSuitability()` picks
+ * the tier on mount from the real device profile.
  */
 const props = defineProps<{ items: Anime[] }>()
 
 const { reducedMotion } = useEnvFlags()
-const { $gsap } = useNuxtApp()
 const { score, year, episodes, synopsisLead } = useFormat()
 
 const root = ref<HTMLElement | null>(null)
 const canvasEl = ref<HTMLCanvasElement | null>(null)
 const active = ref(0)
-const webglOn = ref(false)
+const progress = ref(0) // 0..1 across the whole pinned scroll (drives parallax)
+// SSR + first-paint default is 'static' so the server render matches hydration;
+// the real tier is resolved in onMounted (client-only) after this paints.
+const tier = ref<DeviceTier>('static')
 
 const covers = computed(() => props.items.map((a) => coverImage(a.images)))
 const count = computed(() => props.items.length)
 
+const isImmersive = computed(() => tier.value === 'gl' || tier.value === 'parallax')
+
 let gl: GalleryGL | null = null
-let st: { kill: () => void } | null = null
-let mm: ReturnType<typeof $gsap.matchMedia> | null = null
+let mm: GsapMatchMedia | null = null
+let gsap: import('~/composables/useGsap').GsapBundle['gsap'] | null = null
 let tickerFn: (() => void) | null = null
 let resizeFn: (() => void) | null = null
 let mouseFn: ((e: PointerEvent) => void) | null = null
 
-function supportsWebGL(): boolean {
-  try {
-    const c = document.createElement('canvas')
-    return !!(
-      window.WebGLRenderingContext &&
-      (c.getContext('webgl') || c.getContext('experimental-webgl'))
-    )
-  } catch {
-    return false
-  }
-}
-
-onMounted(() => {
+onMounted(async () => {
   if (!root.value) return
-  mm = $gsap.matchMedia()
+  // GSAP is lazy-loaded after first paint (kept out of the entry bundle).
+  const bundle = await loadGsap()
+  if (!root.value) return
+  gsap = bundle.gsap
+  mm = gsap.matchMedia()
 
   mm.add('(prefers-reduced-motion: no-preference)', () => {
-    if (!root.value) return
+    if (!root.value || !gsap) return
 
-    const useGL = !!canvasEl.value && supportsWebGL() && covers.value.length > 1
-    if (useGL && canvasEl.value) {
-      gl = createGalleryGL(canvasEl.value, covers.value)
-      webglOn.value = true
-      tickerFn = () => gl?.render()
-      $gsap.ticker.add(tickerFn)
-      resizeFn = () => gl?.resize()
-      window.addEventListener('resize', resizeFn)
-      mouseFn = (e: PointerEvent) =>
-        gl?.setMouse(e.clientX / window.innerWidth, e.clientY / window.innerHeight)
-      window.addEventListener('pointermove', mouseFn, { passive: true })
+    // Resolve the device tier now (real GPU/DPR/renderer inspection).
+    tier.value = canvasSuitability(reducedMotion.value)
+    if (tier.value === 'static') return
+
+    const wantGL = tier.value === 'gl' && !!canvasEl.value && covers.value.length > 1
+
+    // Code-split OGL: dynamically import the GL composable so its ~10kB + the
+    // shader plumbing never lands in the main bundle (the first-paint cost).
+    if (wantGL && canvasEl.value) {
+      import('~/composables/useGalleryGL')
+        .then(({ createGalleryGL }) => {
+          if (!canvasEl.value || tier.value !== 'gl' || !gsap) return
+          gl = createGalleryGL(canvasEl.value, covers.value)
+          tickerFn = () => gl?.render()
+          gsap.ticker.add(tickerFn)
+          resizeFn = () => gl?.resize()
+          window.addEventListener('resize', resizeFn)
+          mouseFn = (e: PointerEvent) =>
+            gl?.setMouse(e.clientX / window.innerWidth, e.clientY / window.innerHeight)
+          window.addEventListener('pointermove', mouseFn, { passive: true })
+        })
+        .catch(() => {
+          // If the chunk fails, fall back to the DOM parallax tier.
+          tier.value = 'parallax'
+        })
     }
 
     const n = count.value
     // Pin the section and scrub through n slides. Each slide gets one viewport
     // of scroll; the last sits a moment before release.
-    const trigger = $gsap.context(() => {
+    const trigger = gsap.context(() => {
       const scrollLen = n * 0.9
-      const t = $gsap.timeline({
+      const t = gsap!.timeline({
         scrollTrigger: {
           trigger: root.value,
           start: 'top top',
@@ -89,6 +103,7 @@ onMounted(() => {
           anticipatePin: 1,
           invalidateOnRefresh: true,
           onUpdate: (self: { progress: number }) => {
+            progress.value = self.progress
             const p = self.progress * (n - 1)
             const idx = Math.min(Math.floor(p), n - 1)
             const frac = p - idx
@@ -101,68 +116,85 @@ onMounted(() => {
       return t
     }, root.value)
 
-    st = trigger
     return () => {
       trigger.revert()
-      if (tickerFn) $gsap.ticker.remove(tickerFn)
+      if (tickerFn) gsap?.ticker.remove(tickerFn)
       if (resizeFn) window.removeEventListener('resize', resizeFn)
       if (mouseFn) window.removeEventListener('pointermove', mouseFn)
       gl?.destroy()
       gl = null
-      webglOn.value = false
     }
   })
 })
 
 onBeforeUnmount(() => {
   mm?.revert()
-  st?.kill()
 })
 
+// DOM-parallax drift: a small, GPU-cheap translate driven by scroll progress.
+// Only meaningful in the 'parallax' tier (no canvas), so the cover still moves.
+const parallaxStyle = computed(() => ({
+  transform: `translate3d(0, ${(progress.value - 0.5) * 8}%, 0) scale(1.08)`,
+}))
+
 // Panel transition for the active-slide swap (JS-driven so it survives pin).
+// `gsap` is set once the lazy chunk resolves; before that (it won't fire, since
+// the panels only swap on scroll which needs the timeline) we no-op gracefully.
 function onPanelEnter(el: Element, done: () => void) {
-  if (reducedMotion.value) return done()
-  $gsap.fromTo(
+  if (reducedMotion.value || !gsap) return done()
+  gsap.fromTo(
     el,
     { opacity: 0, y: 28 },
     { opacity: 1, y: 0, duration: 0.7, ease: 'expo.out', onComplete: done },
   )
 }
 function onPanelLeave(el: Element, done: () => void) {
-  if (reducedMotion.value) return done()
-  $gsap.to(el, { opacity: 0, y: -20, duration: 0.4, ease: 'power2.in', onComplete: done })
+  if (reducedMotion.value || !gsap) return done()
+  gsap.to(el, { opacity: 0, y: -20, duration: 0.4, ease: 'power2.in', onComplete: done })
 }
 </script>
 
 <template>
-  <!-- ============================ FULL MOTION ============================ -->
+  <!-- ============================ IMMERSIVE ============================ -->
+  <!-- One pinned section for both the 'gl' and 'parallax' tiers; the canvas is
+       present only on the GL tier, the DOM crossfade only otherwise. -->
   <section
-    v-if="!reducedMotion"
+    v-if="isImmersive"
     ref="root"
     class="relative h-screen w-full overflow-hidden"
     aria-roledescription="scroll gallery"
     aria-label="Top anime, scroll-driven gallery"
   >
-    <!-- WebGL atmospheric layer -->
+    <!-- WebGL atmospheric layer (GL tier only) -->
     <canvas
+      v-show="tier === 'gl'"
       ref="canvasEl"
       class="absolute inset-0 h-full w-full"
       aria-hidden="true"
     />
-    <!-- CSS crossfade fallback when WebGL is unavailable -->
-    <div v-if="!webglOn" class="absolute inset-0" aria-hidden="true">
-      <img
-        v-for="(c, i) in covers"
-        :key="c"
-        :src="c"
-        alt=""
-        class="absolute inset-0 h-full w-full object-cover transition-opacity duration-700 ease-house"
-        :style="{ opacity: i === active ? 0.5 : 0 }"
-      />
+
+    <!-- DOM crossfade + parallax drift (parallax tier — no canvas, no shader) -->
+    <div v-if="tier === 'parallax'" class="absolute inset-0" aria-hidden="true">
+      <div class="absolute inset-0 will-change-transform" :style="parallaxStyle">
+        <img
+          v-for="(a, i) in props.items"
+          :key="a.mal_id"
+          :src="coverImage(a.images)"
+          :srcset="coverSrcSet(a.images)"
+          sizes="100vw"
+          alt=""
+          decoding="async"
+          class="absolute inset-0 h-full w-full object-cover transition-opacity duration-700 ease-house"
+          :style="{ opacity: i === active ? 0.6 : 0 }"
+        />
+      </div>
       <div class="absolute inset-0 bg-gradient-to-t from-void via-void/70 to-void/30" />
+      <div
+        class="pointer-events-none absolute inset-0 [background:radial-gradient(120%_90%_at_50%_10%,transparent,rgba(14,10,16,0.8))]"
+      />
     </div>
 
-    <!-- Readable DOM overlay -->
+    <!-- Readable DOM overlay (identical in both immersive tiers) -->
     <div class="container-page relative z-10 flex h-full flex-col justify-end pb-[12vh]">
       <div class="grid grid-cols-12 items-end gap-6">
         <div class="col-span-12 md:col-span-8 lg:col-span-7">
@@ -170,8 +202,8 @@ function onPanelLeave(el: Element, done: () => void) {
             <article :key="active" class="space-y-5">
               <div class="flex items-center gap-3 font-mono text-xs uppercase tracking-[0.3em] text-rose">
                 <span class="nums">{{ String(active + 1).padStart(2, '0') }}</span>
-                <span class="h-px w-10 bg-rose/50" />
-                <span class="text-bone-faint">Top {{ count }}</span>
+                <span class="h-px w-10 bg-gradient-to-r from-rose to-ice" />
+                <span class="text-bone-dim">Top {{ count }}</span>
               </div>
               <h2
                 class="font-display text-[clamp(2.4rem,7vw,6rem)] uppercase leading-[0.92] tracking-tightest text-balance text-bone"
@@ -188,7 +220,7 @@ function onPanelLeave(el: Element, done: () => void) {
                 </span>
                 <span class="nums">{{ year(props.items[active]!) }}</span>
                 <span class="nums">{{ episodes(props.items[active]?.episodes) }}</span>
-                <span v-if="props.items[active]?.type" class="uppercase tracking-wide">
+                <span v-if="props.items[active]?.type" class="uppercase tracking-wide text-ice">
                   {{ props.items[active]?.type }}
                 </span>
               </div>
@@ -211,7 +243,7 @@ function onPanelLeave(el: Element, done: () => void) {
               v-for="(a, i) in props.items"
               :key="a.mal_id"
               class="flex items-center justify-end gap-3 font-mono text-xs transition-colors duration-300"
-              :class="i === active ? 'text-bone' : 'text-bone-faint/50'"
+              :class="i === active ? 'text-bone' : 'text-bone-dim/70'"
             >
               <span class="truncate" :class="i === active ? 'max-w-[10rem]' : 'max-w-0 opacity-0'">
                 {{ a.title }}
@@ -219,7 +251,7 @@ function onPanelLeave(el: Element, done: () => void) {
               <span class="nums">{{ String(i + 1).padStart(2, '0') }}</span>
               <span
                 class="h-px transition-all duration-300"
-                :class="i === active ? 'w-8 bg-rose' : 'w-3 bg-bone-faint/40'"
+                :class="i === active ? 'w-8 bg-rose' : 'w-3 bg-ice/40'"
               />
             </li>
           </ol>
@@ -227,8 +259,8 @@ function onPanelLeave(el: Element, done: () => void) {
       </div>
 
       <!-- Scroll hint: a smoothly-eased drop, not a bounce. -->
-      <div class="mt-12 flex items-center gap-3 text-xs uppercase tracking-[0.3em] text-bone-faint">
-        <span class="relative flex h-8 w-5 items-start justify-center overflow-hidden rounded-full border border-bone-faint/40 p-1">
+      <div class="mt-12 flex items-center gap-3 text-xs uppercase tracking-[0.3em] text-bone-dim">
+        <span class="relative flex h-8 w-5 items-start justify-center overflow-hidden rounded-full border border-ice/40 p-1">
           <span class="scroll-cue h-2 w-1 rounded-full bg-rose" />
         </span>
         Scroll to traverse
@@ -236,7 +268,7 @@ function onPanelLeave(el: Element, done: () => void) {
     </div>
   </section>
 
-  <!-- ====================== REDUCED-MOTION FALLBACK ====================== -->
+  <!-- ======================= STATIC / REDUCED FALLBACK ======================= -->
   <section v-else class="container-page py-16" aria-label="Top anime">
     <ul class="grid gap-10">
       <li
@@ -247,6 +279,8 @@ function onPanelLeave(el: Element, done: () => void) {
         <NuxtLink :to="`/anime/${a.mal_id}`" class="block overflow-hidden rounded-lg">
           <img
             :src="coverImage(a.images)"
+            :srcset="coverSrcSet(a.images)"
+            :sizes="GALLERY_SIZES"
             :alt="`Cover art for ${a.title}`"
             loading="lazy"
             class="aspect-[3/4] w-full object-cover"

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { loadGsap, type GsapMatchMedia } from '~/composables/useGsap'
 
 /**
  * A composition-friendly scroll reveal for non-text blocks (cards, images,
@@ -18,24 +19,28 @@ const props = withDefaults(
     delay?: number
     start?: string
     duration?: number
+    /** Element tag to render as (e.g. 'dl' for a semantic stat list). */
+    as?: string
   }>(),
-  { y: 40, stagger: 0, delay: 0, start: 'top 88%', duration: 0.9 },
+  { y: 40, stagger: 0, delay: 0, start: 'top 88%', duration: 0.9, as: 'div' },
 )
 
-const { $gsap } = useNuxtApp()
 const el = ref<HTMLElement | null>(null)
-let mm: ReturnType<typeof $gsap.matchMedia> | null = null
+let mm: GsapMatchMedia | null = null
 
-onMounted(() => {
+onMounted(async () => {
   if (!el.value) return
-  mm = $gsap.matchMedia()
+  // GSAP is lazy-loaded after first paint; bail if we unmounted meanwhile.
+  const { gsap } = await loadGsap()
+  if (!el.value) return
+  mm = gsap.matchMedia()
 
   mm.add('(prefers-reduced-motion: no-preference)', () => {
     const targets =
       props.stagger > 0 && el.value
         ? (Array.from(el.value.children) as HTMLElement[])
         : (el.value as HTMLElement)
-    const tween = $gsap.from(targets, {
+    const tween = gsap.from(targets, {
       y: props.y,
       opacity: 0,
       duration: props.duration,
@@ -64,7 +69,7 @@ onBeforeUnmount(() => mm?.revert())
 </script>
 
 <template>
-  <div ref="el" data-reveal>
+  <component :is="props.as" ref="el" data-reveal>
     <slot />
-  </div>
+  </component>
 </template>

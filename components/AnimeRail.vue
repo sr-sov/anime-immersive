@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useEnvFlags } from '~/composables/useReducedMotion'
+import { loadGsap } from '~/composables/useGsap'
 import type { Anime } from '~/types/jikan'
 
 /**
@@ -16,24 +17,26 @@ const props = defineProps<{
 }>()
 
 const { reducedMotion } = useEnvFlags()
-const { $gsap, $ScrollTrigger } = useNuxtApp()
 
 const track = ref<HTMLElement | null>(null)
 let st: { kill: () => void } | null = null
 
-onMounted(() => {
+onMounted(async () => {
   if (reducedMotion.value || !track.value) return
-  const clamp = $gsap.utils.clamp(-8, 8)
-  const skewSetter = $gsap.quickSetter(track.value, 'skewX', 'deg')
+  // GSAP is lazy-loaded after first paint (kept out of the entry bundle).
+  const { gsap, ScrollTrigger } = await loadGsap()
+  if (reducedMotion.value || !track.value) return
+  const clamp = gsap.utils.clamp(-8, 8)
+  const skewSetter = gsap.quickSetter(track.value, 'skewX', 'deg')
   const proxy = { skew: 0 }
 
-  st = $ScrollTrigger.create({
+  st = ScrollTrigger.create({
     trigger: track.value,
     onUpdate: (self: { getVelocity: () => number }) => {
       const skew = clamp(self.getVelocity() / -1200)
       if (Math.abs(skew) > Math.abs(proxy.skew)) {
         proxy.skew = skew
-        $gsap.to(proxy, {
+        gsap.to(proxy, {
           skew: 0,
           duration: 0.8,
           ease: 'power3',

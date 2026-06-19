@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useEnvFlags } from '~/composables/useReducedMotion'
+import { loadGsap } from '~/composables/useGsap'
 import { clamp, damp } from '~/utils/motion'
 
 /**
@@ -17,7 +18,6 @@ import { clamp, damp } from '~/utils/motion'
  * fallback, not a degraded one. Driven off gsap.ticker (one rАF for the app).
  */
 const { reducedMotion, finePointer } = useEnvFlags()
-const { $gsap } = useNuxtApp()
 
 const dot = ref<HTMLElement | null>(null)
 const ring = ref<HTMLElement | null>(null)
@@ -30,6 +30,7 @@ let lastX = 0
 let active = false // hovering an interactive element
 let magnetEl: HTMLElement | null = null
 let cleanup: Array<() => void> = []
+let gsap: import('~/composables/useGsap').GsapBundle['gsap'] | null = null
 
 function onMove(e: PointerEvent) {
   target.x = e.clientX
@@ -68,7 +69,8 @@ function onLeaveWindow() {
 
 // Per-frame update, driven by the GSAP ticker (deltaRatio()/60 == seconds).
 function tick() {
-  const dt = $gsap.ticker.deltaRatio() / 60
+  if (!gsap) return
+  const dt = gsap.ticker.deltaRatio() / 60
   // When locked onto an element, ease the *target* toward its centre so the
   // ring magnetically settles on the control rather than the bare pointer.
   let tx = target.x
@@ -103,22 +105,26 @@ function tick() {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   if (reducedMotion.value || !finePointer.value) return
+  // GSAP is lazy-loaded after first paint; the cursor rides its ticker.
+  const bundle = await loadGsap()
+  if (reducedMotion.value || !finePointer.value) return
+  gsap = bundle.gsap
 
   document.documentElement.classList.add('has-custom-cursor')
   window.addEventListener('pointermove', onMove, { passive: true })
   window.addEventListener('pointerover', onOver, { passive: true })
   window.addEventListener('pointerout', onOut, { passive: true })
   document.addEventListener('mouseleave', onLeaveWindow)
-  $gsap.ticker.add(tick)
+  gsap.ticker.add(tick)
 
   cleanup = [
     () => window.removeEventListener('pointermove', onMove),
     () => window.removeEventListener('pointerover', onOver),
     () => window.removeEventListener('pointerout', onOut),
     () => document.removeEventListener('mouseleave', onLeaveWindow),
-    () => $gsap.ticker.remove(tick),
+    () => gsap?.ticker.remove(tick),
     () => document.documentElement.classList.remove('has-custom-cursor'),
   ]
 })
