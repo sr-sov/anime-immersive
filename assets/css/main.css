@@ -1,0 +1,181 @@
+@import url('https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    /* Live mirror of the cursor position, written once per frame by the
+       magnetic cursor ticker. Ambient glow effects read it so they track the
+       pointer without each consumer attaching its own listener. */
+    --mx: 50vw;
+    --my: 50vh;
+  }
+
+  /* Native smooth scroll is OFF — Lenis drives scrolling. When Lenis is not
+     mounted (reduced-motion, SSR fallback) the browser default applies. */
+  .lenis.lenis-smooth {
+    scroll-behavior: auto !important;
+  }
+  .lenis.lenis-stopped {
+    overflow: clip;
+  }
+
+  body {
+    @apply bg-void text-bone antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+    text-rendering: optimizeLegibility;
+    overflow-x: clip;
+  }
+
+  ::selection {
+    background: theme('colors.rose.DEFAULT');
+    color: theme('colors.void.DEFAULT');
+  }
+
+  /* Visible, high-contrast focus ring for keyboard users, app-wide. */
+  :where(a, button, input, select, [tabindex]):focus-visible {
+    @apply outline-none ring-2 ring-rose ring-offset-2 ring-offset-void;
+    border-radius: 2px;
+  }
+
+  /* Custom-cursor mode: hide the native pointer on fine-pointer devices only.
+     The class is added by the cursor composable, never on touch / reduced
+     motion, so we always keep a usable system cursor as the fallback. */
+  html.has-custom-cursor,
+  html.has-custom-cursor * {
+    cursor: none;
+  }
+}
+
+@layer components {
+  .container-page {
+    @apply mx-auto w-full max-w-[1600px] px-5 sm:px-8 lg:px-12;
+  }
+
+  /* A hairline divider in the brand temperature. */
+  .hairline {
+    @apply border-void-200/70;
+  }
+
+  /* Skeleton shimmer for loading states. */
+  .skeleton {
+    @apply relative overflow-hidden bg-void-100;
+  }
+  .skeleton::after {
+    content: '';
+    @apply absolute inset-0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 122, 171, 0.08),
+      transparent
+    );
+    animation: shimmer 1.5s infinite;
+  }
+  @keyframes shimmer {
+    100% {
+      transform: translateX(100%);
+    }
+  }
+
+  /* Per-line clip mask used by SplitText line reveals. */
+  .line-mask {
+    overflow: hidden;
+    display: block;
+  }
+
+  /* Tabular figures for stats so numbers don't jitter. */
+  .nums {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+
+  /* Scroll cue: a smooth, decelerating drop + fade (no bounce). */
+  .scroll-cue {
+    animation: scroll-cue 1.8s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  }
+  @keyframes scroll-cue {
+    0% {
+      transform: translateY(0);
+      opacity: 0;
+    }
+    25% {
+      opacity: 1;
+    }
+    75% {
+      transform: translateY(120%);
+      opacity: 0;
+    }
+    100% {
+      transform: translateY(120%);
+      opacity: 0;
+    }
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  .text-pretty {
+    text-wrap: pretty;
+  }
+  /* Edge fade for marquees / horizontal rails. */
+  .mask-x-fade {
+    -webkit-mask-image: linear-gradient(
+      to right,
+      transparent,
+      black 8%,
+      black 92%,
+      transparent
+    );
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      black 8%,
+      black 92%,
+      transparent
+    );
+  }
+}
+
+/* Page route transition: a quick cinematic clip-fade. */
+.cine-enter-active,
+.cine-leave-active {
+  transition: opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.cine-enter-from,
+.cine-leave-to {
+  opacity: 0;
+}
+
+/* -------------------------------------------------------------------------
+   Reduced motion — a FIRST-CLASS static fallback, not a shortened animation.
+   GSAP timelines are gated in JS via gsap.matchMedia(); this block is the CSS
+   backstop that neutralizes every transition/animation and reveals any
+   JS-hidden content at its final state.
+   ------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  html {
+    scroll-behavior: auto !important;
+  }
+  /* Anything the motion layer pre-hides must be visible without JS. */
+  [data-reveal],
+  [data-split] {
+    opacity: 1 !important;
+    transform: none !important;
+    clip-path: none !important;
+  }
+}
